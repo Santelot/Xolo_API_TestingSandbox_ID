@@ -1,0 +1,423 @@
+ <!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Chatbase Custom UI</title>
+  <style>
+    :root { --bg:#0e0e10; --panel:#1a1a1f; --muted:#9aa3a7; --text:#f3f4f6; --accent:#4f46e5; }
+    html,body { height:100%; margin:0; background:var(--bg); color:var(--text); font-family:system-ui,Segoe UI,Arial,sans-serif; }
+    /* ✅ Asegura que cualquier elemento con [hidden] se oculte, aunque haya reglas display en CSS */
+    [hidden] { display:none !important; }
+
+    .app { display:grid; grid-template-rows:auto 1fr auto; height:100%; max-width:900px; margin:0 auto; }
+    header { padding:14px 18px; background:var(--panel); border-bottom:1px solid #27272a; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+    header h1 { font-size:16px; margin:0; font-weight:600; letter-spacing:.2px; }
+    header .pill { font-size:12px; color:var(--muted); border:1px solid #2e2e35; padding:4px 8px; border-radius:999px; }
+    .chat { padding:18px; overflow:auto; display:flex; flex-direction:column; gap:12px; }
+    .msg { max-width:80%; padding:12px 14px; border-radius:14px; line-height:1.45; white-space:pre-wrap; word-wrap:break-word; }
+    .user { align-self:flex-end; background:#2d2d34; border:1px solid #3a3a42; }
+    .bot { align-self:flex-start; background:#111113; border:1px solid #25252b; }
+    .meta { font-size:12px; color:var(--muted); }
+    .inputbar { background:var(--panel); border-top:1px solid #27272a; padding:12px; }
+    .row { display:flex; gap:8px; }
+    textarea { flex:1; resize:none; min-height:48px; max-height:120px; border-radius:10px; padding:12px; border:1px solid #2e2e35; background:#0b0b0e; color:var(--text); outline:none; }
+    button { border:1px solid #3b3bea; background:var(--accent); color:white; padding:12px 16px; border-radius:10px; cursor:pointer; font-weight:600; }
+    button.secondary { background:#16161b; border:1px solid #2e2e35; color:var(--muted); }
+    button:disabled { opacity:.5; cursor:not-allowed; }
+    .toolbar { display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; }
+    details { background:#0b0b0e; border:1px solid #222228; border-radius:10px; padding:8px 10px; }
+    summary { cursor:pointer; color:var(--muted); }
+    .convlist { display:grid; gap:8px; margin-top:6px; }
+    .conv { border:1px solid #2a2a30; background:#101014; border-radius:8px; padding:8px 10px; font-size:13px;}
+    .notice { font-size:12px; color:#c9b458; }
+    .pill.warn { border-color:#8B5CF6; color:#c4b5fd; }
+
+    /* Modal identidad */
+    .modal-backdrop {
+      position:fixed; inset:0; background:#0008; display:flex; align-items:center; justify-content:center; z-index:50;
+    }
+    .modal { width:min(520px, 92vw); background:#111214; border:1px solid #2a2a30; border-radius:14px; padding:18px; }
+    .modal h2 { margin:0 0 6px 0; font-size:18px; }
+    .modal p { margin:6px 0 12px 0; color:var(--muted); font-size:14px; }
+    .modal .row { gap:8px; }
+    .modal input {
+      flex:1; padding:12px; border-radius:10px; border:1px solid #2e2e35; background:#0b0b0e; color:var(--text);
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>Xolo • Developer Sandbox</h1>
+      <span class="pill" id="uid-pill">UID: —</span>
+      <span class="pill" id="cid-pill">Conversación: —</span>
+      <span class="pill">Streaming activo</span>
+      <span class="pill warn">Demo: define tu ID antes de chatear</span>
+    </header>
+
+    <main class="chat" id="chat"></main>
+
+    <section class="inputbar">
+      <div class="row">
+        <textarea id="prompt" placeholder="Escribe tu mensaje y presiona Enviar…"></textarea>
+        <button id="sendBtn" disabled>Enviar</button>
+      </div>
+      <div class="toolbar">
+        <button class="secondary" id="newChatBtn" title="Crear conversación nueva (mismo UID)" disabled>Nueva conversación</button>
+        <button class="secondary" id="listConvBtn" title="Consultar conversaciones (GET)" disabled>Ver conversaciones</button>
+        <span class="notice">En producción, usa un proxy para ocultar tu API key.</span>
+      </div>
+      <details style="margin-top:10px;">
+        <summary>Config rápida</summary>
+        <div class="meta">
+          <div>Temperatura: <code class="inline" id="tempVal">0.2</code> • Modelo: <code class="inline" id="modelVal">por defecto</code></div>
+        </div>
+      </details>
+    </section>
+  </div>
+
+  <!-- Modal temporal para identidad -->
+  <div class="modal-backdrop" id="ident-backdrop" role="dialog" aria-modal="true" aria-labelledby="ident-title">
+    <div class="modal">
+      <h2 id="ident-title">Identifícate para esta sesión</h2>
+      <p>Escribe un ID (matrícula, alias, etc.). Generaremos un <em>hash</em> estable mezclado con un PRNG para distinguirte aunque compartas IP.</p>
+      <div class="row">
+        <input id="identityInput" placeholder="Ej: prueba, a0123456, m.garcia" autocomplete="username" />
+        <button id="identityBtn">Continuar</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    /* =========================
+     * ⚙️ CONFIG — RELLENAR (TODO)
+     * ========================= */
+    const CHATBASE_API_KEY = "92f35646-d423-48f9-9e49-ae9c2a39ff16";           // p.ej. "sk_live_xxx"
+    const CHATBASE_CHATBOT_ID = "oSTY10WXrzUrKWp420JQ9";     // p.ej. "abcd-1234..."
+    const DEFAULT_TEMPERATURE = 0.2;
+    const OVERRIDE_MODEL = "";                                  // opcional: p.ej. "gpt-4o-mini"
+    const USE_STREAMING = true;
+
+    /* =========================
+     * 🧠 ESTADO
+     * ========================= */
+    const chatEl = document.getElementById("chat");
+    const promptEl = document.getElementById("prompt");
+    const sendBtn = document.getElementById("sendBtn");
+    const newChatBtn = document.getElementById("newChatBtn");
+    const listConvBtn = document.getElementById("listConvBtn");
+    const cidPill = document.getElementById("cid-pill");
+    const uidPill = document.getElementById("uid-pill");
+    const tempVal = document.getElementById("tempVal");
+    const modelVal = document.getElementById("modelVal");
+    const identBackdrop = document.getElementById("ident-backdrop");
+    const identityInput = document.getElementById("identityInput");
+    const identityBtn = document.getElementById("identityBtn");
+
+    let messages = [];
+    let userIdentity = null; // texto como lo escribe el usuario
+    let userUID = null;      // normalizado
+    let conversationId = null;
+
+    tempVal.textContent = DEFAULT_TEMPERATURE;
+    modelVal.textContent = OVERRIDE_MODEL || "por defecto";
+
+    // 🔔 Listener ya pedido: alerta si el asistente manda "AURORA_RETROFLEX"
+    window.addEventListener("chatbot:assistant_message", (e) => {
+      const msg = (e.detail?.text ?? "").trim();
+      if (msg.includes("AURORA_RETROFLEX")) {
+        alert("Alerta: el asistente envió ‘AURORA_RETROFLEX’."); 
+      }
+    });
+
+    window.addEventListener("DOMContentLoaded", async () => {
+      // listeners UI
+      sendBtn.addEventListener("click", onSend);
+      promptEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(); }
+      });
+      newChatBtn.addEventListener("click", startNewConversationSameUID);
+      listConvBtn.addEventListener("click", fetchConversations);
+
+      // Modal identidad (temporal pruebas)
+      setupIdentityModal();
+      await ensureIdentity();   // bloquea hasta que definan ID
+
+      // Habilita acciones tras identificar
+      sendBtn.disabled = false;
+      newChatBtn.disabled = false;
+      listConvBtn.disabled = false;
+
+      // Rehidrata historial (si existe) para este conversationId
+      messages = loadMessagesFor(conversationId);
+      if (messages.length === 0) {
+        appendMessage("assistant", "Hola, soy tu asistente. ¿En qué te ayudo hoy?");
+      } else {
+        for (const m of messages) appendBubbleOnly(m.role, m.content);
+        scrollToEnd();
+      }
+    });
+
+    /* =========================
+     * 🙋 Identidad estable (determinística)
+     * ========================= */
+    function setupIdentityModal() {
+      // Prellenar con lo último usado (comodidad en pruebas)
+      const last = localStorage.getItem("demo_identity_input") || "";
+      if (last) identityInput.value = last;
+
+      identityBtn.addEventListener("click", handleIdentityContinue);
+      identityInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); handleIdentityContinue(); }
+      });
+      // Mostrar modal al inicio
+      showIdentityModal();
+    }
+
+    function handleIdentityContinue() {
+      const raw = identityInput.value.trim();
+      if (!raw) { identityInput.focus(); return; }
+      localStorage.setItem("demo_identity_input", raw);
+
+      userIdentity = raw;
+      userUID = normalizeIdentity(userIdentity);
+      conversationId = deriveDeterministicConversationId(userUID, CHATBASE_CHATBOT_ID);
+
+      updateBadges();
+      hideIdentityModal();
+    }
+
+    function ensureIdentity() {
+      return new Promise((resolve) => {
+        // Resuelve cuando el modal esté oculto (usuario ya definió ID)
+        const i = setInterval(() => {
+          if (identBackdrop.hasAttribute("hidden")) { clearInterval(i); resolve(); }
+        }, 50);
+      });
+    }
+
+    function normalizeIdentity(s) {
+      return s.normalize("NFKC").trim().toLowerCase();
+    }
+
+    // Hash FNV-1a 32-bit (rápido)
+    function fnv1a32(str) {
+      let h = 0x811c9dc5;
+      for (let i = 0; i < str.length; i++) {
+        h ^= str.charCodeAt(i);
+        h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+      }
+      return h >>> 0;
+    }
+
+    // PRNG determinista (mulberry32)
+    function mulberry32(a) {
+      return function() {
+        let t = a += 0x6D2B79F5;
+        t = Math.imul(t ^ (t >>> 15), 1 | t);
+        t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      }
+    }
+
+    function deriveDeterministicConversationId(identity, chatbotId) {
+      const seed = fnv1a32(`${identity}|${chatbotId}`);
+      const rng = mulberry32(seed);
+      let hex = "";
+      for (let i = 0; i < 4; i++) {
+        const n = Math.floor(rng() * 0xFFFFFFFF) >>> 0;
+        hex += n.toString(16).padStart(8, "0");
+      }
+      return `uid-${identity.slice(0,16)}-${hex.slice(0,16)}`;
+    }
+
+    /* ✅ Mostrar/ocultar modal de forma robusta */
+    function showIdentityModal() {
+      identBackdrop.removeAttribute("hidden");
+      identBackdrop.style.display = "flex";
+      identBackdrop.setAttribute("aria-hidden", "false");
+      setTimeout(() => identityInput.focus(), 0);
+    }
+    function hideIdentityModal() {
+      identBackdrop.setAttribute("hidden", "");
+      identBackdrop.style.display = "none";
+      identBackdrop.setAttribute("aria-hidden", "true");
+    }
+
+    function updateBadges() {
+      uidPill.textContent = `UID: ${userUID ?? "—"}`;
+      cidPill.textContent = `Conversación: ${(conversationId ?? "—").slice(0, 12)}…`;
+    }
+
+    /* =========================
+     * 🚀 POST /api/v1/chat
+     * ========================= */
+    async function onSend() {
+      if (!conversationId) return; // seguridad: no enviar sin identidad
+
+      const text = promptEl.value.trim();
+      if (!text) return;
+
+      appendMessage("user", text);
+      promptEl.value = "";
+
+      const botMsgEl = appendMessage("assistant", "…", { streaming: true });
+
+      try {
+        const body = {
+          messages,
+          chatbotId: CHATBASE_CHATBOT_ID,
+          stream: USE_STREAMING,
+          temperature: DEFAULT_TEMPERATURE,
+          conversationId,
+        };
+        if (OVERRIDE_MODEL) body.model = OVERRIDE_MODEL;
+
+        const res = await fetch("https://www.chatbase.co/api/v1/chat", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${CHATBASE_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(body),
+        });
+
+        if (!res.ok) {
+          let errMsg = `${res.status} ${res.statusText}`;
+          try { const errJson = await res.json(); if (errJson?.message) errMsg = errJson.message; } catch {}
+          throw new Error(errMsg);
+        }
+
+        if (USE_STREAMING && res.body) {
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let done = false, acc = "";
+          while (!done) {
+            const { value, done: doneReading } = await reader.read();
+            done = doneReading;
+            const chunk = decoder.decode(value || new Uint8Array(), { stream: !done });
+            acc += chunk;
+            botMsgEl.textContent = acc
+              .replace(/^data:\s*/gm, "")
+              .replace(/\n?data:\s*\[DONE\]\s*$/m, "");
+            scrollToEnd();
+          }
+          finalizeAssistantMessage(botMsgEl);
+        } else {
+          const data = await res.json();
+          botMsgEl.textContent = data?.text || "(sin respuesta)";
+          finalizeAssistantMessage(botMsgEl);
+        }
+
+      } catch (err) {
+        botMsgEl.textContent = `Error: ${err.message}`;
+        botMsgEl.style.borderColor = "#7c2d12";
+        persistState();
+      }
+    }
+
+    /* =========================
+     * 📥 GET /api/v1/get-conversations
+     * ========================= */
+    async function fetchConversations() {
+      const q = new URLSearchParams({ chatbotId: CHATBASE_CHATBOT_ID, page: "1", size: "10" });
+      try {
+        const res = await fetch(`https://www.chatbase.co/api/v1/get-conversations?${q.toString()}`, {
+          method: "GET",
+          headers: {
+            "Authorization": `Bearer ${CHATBASE_API_KEY}`,
+            "Accept": "application/json",
+          },
+        });
+        if (!res.ok) {
+          let err = `${res.status} ${res.statusText}`;
+          try { const j = await res.json(); if (j?.message) err = j.message; } catch {}
+          throw new Error(err);
+        }
+        const data = await res.json();
+        showConversations(data?.data || []);
+      } catch (e) {
+        alert("No se pudieron obtener conversaciones: " + e.message);
+      }
+    }
+
+    function showConversations(list) {
+      let wrap = document.querySelector(".convlist");
+      if (!wrap) {
+        wrap = document.createElement("div");
+        wrap.className = "convlist";
+        const details = document.createElement("details");
+        const sum = document.createElement("summary");
+        sum.textContent = `Conversaciones recientes (${list.length})`;
+        details.appendChild(sum);
+        details.appendChild(wrap);
+        document.querySelector(".inputbar").appendChild(details);
+        details.open = true;
+      }
+      wrap.innerHTML = "";
+      list.forEach(c => {
+        const div = document.createElement("div");
+        div.className = "conv";
+        const first = (c.messages?.[0]?.content || "").slice(0, 80).replace(/\s+/g, " ");
+        div.textContent = `#${c.id} • ${c.created_at} • ${first || "(sin preview)"}`;
+        wrap.appendChild(div);
+      });
+    }
+
+    /* =========================
+     * 🧱 Utilidades UI/estado
+     * ========================= */
+    function appendBubbleOnly(role, text) {
+      const el = document.createElement("div");
+      el.className = `msg ${role === "user" ? "user" : "bot"}`;
+      el.textContent = text;
+      chatEl.appendChild(el);
+      return el;
+    }
+
+    function appendMessage(role, text) {
+      const el = appendBubbleOnly(role, text);
+      scrollToEnd();
+      messages.push({ role, content: text });
+      persistState();
+      return el;
+    }
+
+    function finalizeAssistantMessage(el) {
+      const lastIdx = messages.length - 1;
+      if (lastIdx >= 0 && messages[lastIdx].role === "assistant") {
+        messages[lastIdx].content = el.textContent;
+        persistState();
+      }
+      dispatchAssistantMessage(el.textContent);
+    }
+
+    function dispatchAssistantMessage(text) {
+      window.dispatchEvent(new CustomEvent("chatbot:assistant_message", {
+        detail: { text, conversationId, userUID }
+      }));
+    }
+
+    function scrollToEnd() { chatEl.scrollTop = chatEl.scrollHeight; }
+
+    function persistState() {
+      if (!conversationId) return;
+      localStorage.setItem(`msgs_${conversationId}`, JSON.stringify(messages));
+      localStorage.setItem("demo_conversation_id", conversationId);
+      localStorage.setItem("demo_user_uid", userUID || "");
+    }
+    function loadMessagesFor(cid) {
+      try { const raw = localStorage.getItem(`msgs_${cid}`); return raw ? JSON.parse(raw) : []; }
+      catch { return []; }
+    }
+
+    function startNewConversationSameUID() {
+      chatEl.innerHTML = "";
+      messages = [];
+      persistState();
+      appendMessage("assistant", "Nueva conversación iniciada (mismo UID). ¿Qué necesitas?");
+    }
+  </script>
+</body>
+</html>
