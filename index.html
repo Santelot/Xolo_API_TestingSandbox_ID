@@ -203,7 +203,7 @@
      * ======================================================== */
     const UI_CONFIG = {
       INITIAL_BOT_MESSAGE: "¡Hola! Soy Xolo, tu compañero de aprendizaje en Innovación y Tecnología. ¿Cómo te llamas? Por favor, dime tu nombre y cuéntame un poco sobre tus intereses: ¿te gusta el fútbol, la música, algún hobby, películas o animales? Con esa información podré personalizar nuestro aprendizaje. ¡Vamos a crear algo increíble hoy!",
-      GRADIENT_COLOR_1: "#8E2DE2", // #1be33d #8E2DE2
+      GRADIENT_COLOR_1: "#8E2DE2",
       GRADIENT_COLOR_2: "#4A00E0",
     };
 
@@ -232,11 +232,24 @@
     let messages = [];
     let userIdentity = null, userUID = null, conversationId = null;
     
+    // Función de ayuda para la configuración de colores
     function hexToRgb(hex) {
       const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
       return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : null;
     }
 
+    /* =========================
+     * ✅ INICIO Y LISTENERS
+     * ========================= */
+
+    // 🔔 LISTENER REQUERIDO: Lanza una alerta si el asistente manda "AURORA_RETROFLEX".
+    window.addEventListener("chatbot:assistant_message", (e) => {
+      const msg = (e.detail?.text ?? "").trim();
+      if (msg.includes("AURORA_RETROFLEX")) {
+        alert("Alerta: el asistente envió ‘AURORA_RETROFLEX’.");
+      }
+    });
+    
     window.addEventListener("DOMContentLoaded", async () => {
       const root = document.documentElement;
       root.style.setProperty('--gradient-start-color', UI_CONFIG.GRADIENT_COLOR_1);
@@ -296,10 +309,6 @@
         }, 50);
       });
     }
-
-    /* =========================================
-     * ✅ FUNCIONES DEL MODAL CORREGIDAS
-     * ========================================= */
     function showIdentityModal() {
       identBackdrop.removeAttribute("hidden");
       identBackdrop.style.display = "flex";
@@ -311,8 +320,6 @@
       identBackdrop.style.display = "none";
       identBackdrop.setAttribute("aria-hidden", "true");
     }
-
-    // ... Resto de funciones de identidad (sin cambios)
     function normalizeIdentity(s) { return s.normalize("NFKC").trim().toLowerCase(); }
     function fnv1a32(str) { let h = 0x811c9dc5; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0; } return h >>> 0; }
     function mulberry32(a) { return function() { let t = a += 0x6D2B79F5; t = Math.imul(t ^ (t >>> 15), 1 | t); t ^= t + Math.imul(t ^ (t >>> 7), 61 | t); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; } }
@@ -337,11 +344,11 @@
 
       const thinkingAnimationHtml = `<div class="thinking"><span class="bar"></span><span class="bar"></span><span class="bar"></span></div>`;
       const botMsgEl = appendBubbleOnly("assistant", thinkingAnimationHtml, true);
-      messages.push({ role: "assistant", content: "" }); // Placeholder
+      messages.push({ role: "assistant", content: "" });
 
       try {
         const body = {
-          messages: messages.slice(0, -1), // Enviar todo menos el placeholder
+          messages: messages.slice(0, -1),
           chatbotId: CHATBASE_CHATBOT_ID,
           stream: USE_STREAMING,
           temperature: DEFAULT_TEMPERATURE, conversationId,
@@ -374,7 +381,7 @@
           finalizeAssistantMessage(botMsgEl);
         }
       } catch (err) {
-        botMsgEl.innerHTML = ""; // Limpiar animación también en caso de error
+        botMsgEl.innerHTML = "";
         botMsgEl.textContent = `Error: ${err.message}`;
         botMsgEl.style.boxShadow = "0 0 15px rgba(255, 50, 50, 0.4)";
         finalizeAssistantMessage(botMsgEl);
@@ -408,7 +415,17 @@
         messages[lastIdx].content = el.textContent;
         persistState();
       }
+      // 🔔 ¡AQUÍ ESTÁ LA CONEXIÓN! Se dispara el evento con el texto final.
+      dispatchAssistantMessage(el.textContent);
     }
+    
+    // ✅ FUNCIÓN RESTAURADA: Crea y dispara el evento personalizado.
+    function dispatchAssistantMessage(text) {
+      window.dispatchEvent(new CustomEvent("chatbot:assistant_message", {
+        detail: { text, conversationId, userUID }
+      }));
+    }
+
     function scrollToEnd() { chatEl.scrollTop = chatEl.scrollHeight; }
     function persistState() { if (!conversationId) return; localStorage.setItem(`msgs_${conversationId}`, JSON.stringify(messages)); }
     function loadMessagesFor(cid) { try { const raw = localStorage.getItem(`msgs_${cid}`); return raw ? JSON.parse(raw) : []; } catch { return []; } }
